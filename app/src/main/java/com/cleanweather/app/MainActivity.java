@@ -136,6 +136,7 @@ public class MainActivity extends Activity {
         loadingOverlay = findViewById(R.id.loadingOverlay);
         errorOverlay = findViewById(R.id.errorOverlay);
         errorText = findViewById(R.id.errorText);
+        footer = findViewById(R.id.footer);
         btnRefresh = findViewById(R.id.btnRefresh);
         btnLocate = findViewById(R.id.btnLocate);
     }
@@ -309,7 +310,10 @@ public class MainActivity extends Activity {
 
         String updateTime = data.fetchedAt > 0 ? TimeUtil.formatUpdateAt(data.fetchedAt) : "";
         String provider = data.provider == null || data.provider.isEmpty() ? "" : " · " + data.provider;
-        footer.setText(String.format("更新于 %s%s", updateTime, provider));
+        // footer 可能因布局差异未绑定，做一次判空，避免渲染阶段空指针闪退
+        if (footer != null) {
+            footer.setText(String.format("更新于 %s%s", updateTime, provider));
+        }
     }
 
     private void animateBackground(int top, int bottom) {

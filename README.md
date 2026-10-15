@@ -31,8 +31,8 @@
 | --- | --- |
 | 应用名 | 纯净天气（CleanWeather） |
 | 包名 | `com.cleanweather.app` |
-| 版本 | 1.0.1（versionCode 2） |
-| 产物 | `app-release.apk`（约 115 KB，已签名） |
+| 版本 | 1.0.2（versionCode 3） |
+| 产物 | `dist/CleanWeather-1.0.2-release.apk`（约 115 KB，已签名） |
 | 最低版本 | **Android 5.0（API 21）** |
 | 目标版本 | Android 14（API 34） |
 | 第三方依赖 | **零依赖**（纯 Java + Android 原生 API） |
@@ -477,8 +477,8 @@ android {
         applicationId "com.cleanweather.app"
         minSdk 21           // ★ 兼容 Android 5.0+
         targetSdk 34
-        versionCode 1
-        versionName "1.0.0"
+        versionCode 3
+        versionName "1.0.2"
     }
     signingConfigs {
         release {
@@ -550,6 +550,23 @@ jarsigner -verify app-release.apk     # → "jar verified."
 | 5 | 图表与列表错位 | `NaN` 数据点导致图表索引与小时列表错位 | 引入 `displayHours` 列表，过滤 `NaN` 后保持一一对应 |
 | 6 | 307 重定向 | `AutoSuggest` 返回 307，默认不跟随 | `httpGet` 手动读取 `Location` 头并重发请求（最多 5 跳） |
 | 7 | 老机定位无响应 | 无 GMS 设备上定位为空 | 改用 `LocationManager`，并用 `lastKnown` 兜底 |
+| 8 | 定位回调在主线程做网络请求 | **点击定位后立即闪退**（`NetworkOnMainThreadException`） | `Locator` 把所有回调统一投递到后台单线程执行器，调用方拿到的回调一定不在主线程 |
+| 9 | 定位监听器堆积 | **连续点击定位几次后界面卡死**（ANR） | 新增 `Locator.cancelActive()` 全局取消 + `minTime=1000ms` + 页面 `locating` 防重 + `onDestroy()` 移除监听 |
+| 10 | 启动不申请定位权限 | **首次安装无权限弹窗、权限默认关闭**，无法定位 | `ensureLocationPermissionOnStart()` 延迟到界面布局完成后申请；用 `location_asked` 持久化标记避免反复打扰 |
+| 11 | 缺失数据被四舍五入成 0 | 指标缺失（`NaN`）时显示 `0` / `0°` / `0%`，像真实数据 | `FormatUtil.missing()` 判定，`NaN` / `Infinity` 统一返回 `--` 占位 |
+| 12 | 删除当前城市后选中残留 | 删除正在查看的城市后，主页面落到一个不存在的城市 id | 删除时同步修正 `selected_city_id`（切到剩余首个城市）并清理温度缓存 |
+| 13 | **渲染阶段空指针闪退（关键）** | **天气数据加载成功后 App 立刻闪退**，日志为 `NullPointerException` | `MainActivity.bindViews()` 漏绑定了布局中的 `R.id.footer`，而 `render()` 末尾调用了 `footer.setText(...)`；补上 `footer = findViewById(R.id.footer)` 并加判空防御 |
+
+### 7.1 关键闪退的定位过程（第 13 条）
+
+这是本项目最典型的一次"**静态排查**"实战。当无法连接设备抓日志时，可以按下面的顺序自行排查：
+
+1. **看崩溃发生的时机**：现象是"数据加载成功后闪退"，说明崩溃点一定在渲染链路（`render()`）而不是网络链路（网络异常会走 `catch`，不会崩）。
+2. **锁定可疑的 View 字段**：逐一核对 `bindViews()` 里绑定了哪些 `R.id.*`，再和布局 `activity_main.xml` 里的 `@+id` 对照。
+3. **发现缺口**：布局里有 `@+id/footer`，代码里声明了 `private TextView footer;`，但 `bindViews()` **从未**执行 `footer = findViewById(R.id.footer)`。
+4. **确认崩点**：`render()` 最后一行 `footer.setText(...)` 作用在一个 `null` 上 → `NullPointerException` → 主线程崩溃。
+
+**修复**：补上 `footer = findViewById(R.id.footer);`，并加 `if (footer != null)` 判空，防止未来布局改动再次引入同类问题。
 
 ### 一条通用经验
 
@@ -625,6 +642,53 @@ jarsigner -verify app-release.apk     # → "jar verified."
 
 > 本节记录每一次版本迭代中的 Bug 修复与改进，方便回溯与学习。
 > 每一个条目都写清了「现象 / 根因 / 修复」，这正是初学者最该积累的部分。
+
+### v1.0.2（versionCode 3）— 渲染闪退修复
+
+**发布日期**：2026-10-15
+
+本次为 Bug 修复版本，解决用户反馈的「运行后仍然闪退」问题。
+
+#### 🐞 修复 1：天气数据加载成功后闪退（主页渲染空指针，**关键**）
+
+- **现象**：App 能正常打开、也发起了网络请求，但在天气数据**加载成功并开始渲染的一瞬间**立刻闪退；
+  由于每次渲染都会触发，表现为「打开后反复闪退 / 像卡死一样」。
+- **根因**：`MainActivity` 声明了成员变量 `private TextView footer;`，布局
+  [activity_main.xml](app/src/main/res/layout/activity_main.xml) 里也有 `@+id/footer`，
+  但 `bindViews()` **漏写了** `footer = findViewById(R.id.footer)`。因此 `footer` 始终为 `null`，
+  而 `render()` 的最后一行会执行 `footer.setText("更新于 …")` → `NullPointerException` → 主线程崩溃。
+- **涉及文件**：[MainActivity.java](app/src/main/java/com/cleanweather/app/MainActivity.java)、
+  [activity_main.xml](app/src/main/res/layout/activity_main.xml)
+- **修复**：在 `bindViews()` 中补上 `footer = findViewById(R.id.footer);`；
+  并在 `render()` 中对该控件增加 `if (footer != null)` 判空，防止后续布局改动再次引入同类问题。
+
+#### 🛡 其他改进
+
+- 汇总本次一并复核并确认已修复的问题（详见第 7 节踩坑记录第 8~12 条）：
+  定位回调线程模型、定位监听器生命周期、首次启动权限申请、缺失数据占位、删除城市后的选中态残留。
+
+#### ✅ 本次验证
+
+- `gradle clean assembleRelease` → **BUILD SUCCESSFUL**；
+- `aapt2 dump badging` → `versionCode=3`、`versionName=1.0.2`、`sdkVersion=21`、`targetSdkVersion=34`；
+- `jarsigner -verify` → `jar verified.`；`apksigner verify` → **v1 + v2 签名均通过**。
+
+#### 🔎 如何自行抓取崩溃日志（adb）
+
+若再次遇到闪退，可连接设备抓取崩溃堆栈（MuMu 模拟器默认 adb 端口为 `127.0.0.1:16384`，
+部分版本为 `7555`）：
+
+```bash
+adb connect 127.0.0.1:16384        # MuMu 12；老版本用 adb connect 127.0.0.1:7555
+adb devices                        # 确认设备已连接
+# 方式一：只看崩溃
+adb logcat -b crash
+# 方式二：过滤本应用
+adb logcat | grep -E "AndroidRuntime|cleanweather"
+# 看到 “FATAL EXCEPTION: main” 后面的第一段堆栈即为崩溃根因
+```
+
+---
 
 ### v1.0.1（versionCode 2）— 稳定性修复
 
