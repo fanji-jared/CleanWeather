@@ -16,32 +16,40 @@ public final class FormatUtil {
         return WIND_DIRS[idx];
     }
 
+    /** 缺失数据统一占位，避免 NaN 被四舍五入成 0 造成"假数据" */
+    private static boolean missing(double v) {
+        return Double.isNaN(v) || Double.isInfinite(v);
+    }
+
     /** 温度取整显示 */
     public static String temp(double t) {
-        long r = Math.round(t);
-        return String.valueOf(r);
+        if (missing(t)) return "--";
+        return String.valueOf(Math.round(t));
     }
 
     public static String tempWithUnit(double t) {
+        if (missing(t)) return "--°";
         return Math.round(t) + "°";
     }
 
     public static String speed(double v) {
-        long r = Math.round(v);
-        return r + " 公里/时";
+        if (missing(v)) return "--";
+        return Math.round(v) + " 公里/时";
     }
 
     public static String percent(double v) {
-        long r = Math.round(v);
-        return r + "%";
+        if (missing(v)) return "--";
+        return Math.round(v) + "%";
     }
 
     public static String km(double v) {
+        if (missing(v)) return "--";
         if (v >= 10) return String.format(Locale.getDefault(), "%.0f", v);
         return String.format(Locale.getDefault(), "%.1f", v);
     }
 
     public static String mm(double v) {
+        if (missing(v)) return "--";
         return String.format(Locale.getDefault(), "%.1f", v);
     }
 

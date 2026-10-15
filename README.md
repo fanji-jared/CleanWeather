@@ -20,7 +20,8 @@
 - [7. 踩坑记录与解决方案](#7-踩坑记录与解决方案)
 - [8. 安装与使用](#8-安装与使用)
 - [9. 面向 AI 构建初学者的经验总结](#9-面向-ai-构建初学者的经验总结)
-- [10. 免责声明](#10-免责声明)
+- [10. 修改历史（Changelog）](#10-修改历史changelog)
+- [11. 免责声明](#11-免责声明)
 
 ---
 
@@ -30,7 +31,8 @@
 | --- | --- |
 | 应用名 | 纯净天气（CleanWeather） |
 | 包名 | `com.cleanweather.app` |
-| 产物 | `app-release.apk`（约 111 KB，已签名） |
+| 版本 | 1.0.1（versionCode 2） |
+| 产物 | `app-release.apk`（约 115 KB，已签名） |
 | 最低版本 | **Android 5.0（API 21）** |
 | 目标版本 | Android 14（API 34） |
 | 第三方依赖 | **零依赖**（纯 Java + Android 原生 API） |
@@ -111,7 +113,7 @@
 
 **优点**
 - **天然无广告**：我们只拿天气数据，页面里那些"资讯/广告"根本不会被请求。
-- **性能极佳**：一个请求拿到全部数据，纯原生渲染，111 KB 的体积。
+- **性能极佳**：一个请求拿到全部数据，纯原生渲染，115 KB 的体积。
 - **完全可控**：UI 想怎么改就怎么改，二级页面随意做。
 - **可离线**：把 JSON 存本地，无网也能看上次的数据。
 - 兼容性最好：不依赖 WebView 内核版本差异。
@@ -127,7 +129,7 @@
 | 开发速度 | 快 | 中（需抓包） |
 | 广告清理彻底度 | 一般（异步广告难根除） | **彻底（根本不下发）** |
 | 性能 / 耗电 | 差 | **优** |
-| 包体积 | 大 | **极小（111 KB）** |
+| 包体积 | 大 | **极小（115 KB）** |
 | 离线可用 | 否 | **是** |
 | 抗网站改版 | 弱（依赖 DOM） | 中（依赖接口字段） |
 | 老设备兼容 | 受 WebView 内核限制 | **好** |
@@ -524,7 +526,7 @@ cd CleanWeather
 ### 6.5 产物
 
 ```
-app/build/outputs/apk/release/app-release.apk     # 约 111 KB，已签名
+app/build/outputs/apk/release/app-release.apk     # 约 115 KB，已签名
 ```
 
 校验签名：
@@ -619,7 +621,97 @@ jarsigner -verify app-release.apk     # → "jar verified."
 
 ---
 
-## 10. 免责声明
+## 10. 修改历史（Changelog）
+
+> 本节记录每一次版本迭代中的 Bug 修复与改进，方便回溯与学习。
+> 每一个条目都写清了「现象 / 根因 / 修复」，这正是初学者最该积累的部分。
+
+### v1.0.1（versionCode 2）— 稳定性修复
+
+**发布日期**：2026-10-15
+
+本次为纯 Bug 修复版本，重点解决「定位相关闪退 / 卡死」与「首次启动不申请定位权限」两大问题。
+
+#### 🐞 修复 1：点击定位后闪退（`NetworkOnMainThreadException`）
+
+- **现象**：点击右上角定位按钮（或首次授权定位后），App 直接闪退。
+- **根因**：`Locator.requestOnce()` 把系统定位监听器注册在主线程 Looper 上，因此 `onLocationChanged()`
+  回调运行在**主线程**；而回调里紧接着调用了 `WeatherApi.reverseGeocode()`（HTTP 网络请求），
+  在主线程做网络 IO 会抛出 `android.os.NetworkOnMainThreadException`，进程被系统杀掉。
+- **涉及文件**：[Locator.java](app/src/main/java/com/cleanweather/app/util/Locator.java)、
+  [MainActivity.java](app/src/main/java/com/cleanweather/app/MainActivity.java)、
+  [CityListActivity.java](app/src/main/java/com/cleanweather/app/CityListActivity.java)
+- **修复**：在 `Locator` 内部把所有回调（`onLocation` / `onFailed`）统一投递到一个**后台单线程执行器**
+  上执行。这样无论系统回调来自哪个 Looper，调用方拿到的回调一定不在主线程，可以安全做网络 IO。
+
+#### 🐞 修复 2：连续点击几次后卡死（定位监听器堆积）
+
+- **现象**：反复点击定位按钮数次后，界面卡死无响应（ANR）。
+- **根因**：每次点击定位都会 `requestLocationUpdates()` 注册一个**新的**监听器，且 `minTime=0`。
+  多个监听器同时在主线程高频回调位置更新，主线程被瞬间刷爆；同时这些监听器在请求结束后也没有被及时移除。
+- **涉及文件**：[Locator.java](app/src/main/java/com/cleanweather/app/util/Locator.java)
+- **修复**：
+  1. `Locator` 新增 `cancelActive()`：发起新定位前先移除上一次的监听器，保证**同一时刻只有一个**活跃监听器；
+  2. `minTime` 由 `0` 调整为 `1000ms`，降低回调频率；
+  3. `MainActivity` / `CityListActivity` 增加 `locating` 标志位，防止连点重复发起定位；
+  4. 两个页面新增 `onDestroy()`，在页面销毁时调用 `Locator.cancelActive()`，避免监听器泄漏。
+
+#### 🐞 修复 3：首次启动不申请定位权限，权限默认关闭
+
+- **现象**：首次安装打开 App 时没有任何权限弹窗，定位权限处于关闭状态，导致无法定位当前城市。
+- **根因**：`MainActivity.onCreate()` 从未主动申请过定位权限，只有在用户点击定位按钮时才申请。
+- **涉及文件**：[MainActivity.java](app/src/main/java/com/cleanweather/app/MainActivity.java)、
+  [CityStore.java](app/src/main/java/com/cleanweather/app/data/CityStore.java)
+- **修复**：新增 `ensureLocationPermissionOnStart()`，在启动时通过 `root.post()` 延迟到界面布局完成后再申请权限：
+  - 未授权且从未申请过（`LocationAsked` 标记，持久化在 SharedPreferences）→ 弹出系统权限对话框；
+  - 已授权且还没有「当前位置」城市 → 自动定位一次；
+  - 已授权且已有定位城市 → 不打扰，沿用用户上次选择。
+  同时把权限被拒绝时的提示改为 `grant_location`（引导用户去授权），而不是笼统的「定位失败」。
+
+#### 🐞 修复 4：缺失数据显示成 "0"（假数据）
+
+- **现象**：接口某些指标缺失（`NaN`）时，界面会显示 `0`、`0°`、`0%`，看起来像真实数据，容易误导。
+- **根因**：`FormatUtil` 直接对 `NaN` 做 `Math.round()`，结果恒为 `0`。
+- **涉及文件**：[FormatUtil.java](app/src/main/java/com/cleanweather/app/util/FormatUtil.java)
+- **修复**：新增 `missing()` 判定，`temp / tempWithUnit / speed / percent / km / mm`
+  遇到 `NaN` 或 `Infinity` 统一返回 `--` / `--°` 占位。
+
+#### 🐞 修复 5：删除当前城市后选中状态残留
+
+- **现象**：在城市管理里删掉「当前正在查看的城市」后，主页面可能落到一个不存在的城市 id 上。
+- **根因**：删除城市时只移除了列表项，没有同步修正 `selected_city_id`；且 `tempMap` 中残留旧温度。
+- **涉及文件**：[CityListActivity.java](app/src/main/java/com/cleanweather/app/CityListActivity.java)
+- **修复**：删除后若被删城市正是当前选中城市，则自动切换到剩余城市的第一个（列表为空则清空选中 id），
+  并同步清理 `tempMap` 缓存。
+
+#### 🛡 其他改进（防御性加固）
+
+- `MainActivity.renderCity()` / `refresh()` 增加 `city == null` 判空，避免极端情况下空指针。
+- `resolveCity()` / `CityListActivity.doLocate()` 在回到主线程更新 UI 前增加 `isFinishing()` / `isDestroyed()` 判断，
+  避免向已销毁页面写数据。
+- 版本号提升至 `versionCode 2` / `versionName 1.0.1`。
+
+#### ✅ 本次验证
+
+- `gradle clean assembleRelease` **BUILD SUCCESSFUL**，无编译错误；
+- `jarsigner -verify` → `jar verified.`；
+- `apksigner verify` → **v1 + v2 签名均验证通过**；
+- `aapt2 dump badging` 确认：`versionCode=2`、`sdkVersion=21`、`targetSdkVersion=34`。
+
+---
+
+### v1.0.0（versionCode 1）— 首次发布
+
+**发布日期**：2026-10-14
+
+- 基于 MSN 天气公开接口，完成原生安卓天气 App 的首个可用版本。
+- 功能：当前天气、分钟级降水、24 小时预报、10 天预报、空气质量、天气详情、生活指数、
+  日出日落月相、温度趋势洞察；二级页（每小时曲线 / 每日详情）；城市搜索与管理；离线缓存。
+- 技术：纯 Java 零依赖、minSdk 21、自绘曲线/色带/温度区间条、系统 LocationManager 定位。
+
+---
+
+## 11. 免责声明
 
 - 本项目为**学习与技术研究目的**的个人练手项目，**非商业用途**。
 - 天气数据版权归原始数据提供方与 MSN 所有；App 仅作为客户端进行展示。
@@ -629,5 +721,5 @@ jarsigner -verify app-release.apk     # → "jar verified."
 
 ---
 
-> **项目状态**：功能已全部实现并构建完成，产物 `app-release.apk`（约 111 KB）已签名可用。
+> **项目状态**：功能已全部实现并构建完成，产物 `app-release.apk`（约 115 KB）已签名可用。
 > 适用于 Android 5.0（API 21）及以上设备。

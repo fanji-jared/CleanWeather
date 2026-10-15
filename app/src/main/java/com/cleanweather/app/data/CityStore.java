@@ -16,6 +16,7 @@ public class CityStore {
     private static final String PREFS = "clean_weather";
     private static final String KEY_CITIES = "cities";
     private static final String KEY_SELECTED = "selected_city_id";
+    private static final String KEY_LOCATION_ASKED = "location_asked";
     private static final String KEY_CACHE_PREFIX = "cache_";
 
     private final SharedPreferences prefs;
@@ -62,6 +63,15 @@ public class CityStore {
 
     public String loadWeatherCache(String cityId) {
         return prefs.getString(KEY_CACHE_PREFIX + cityId, null);
+    }
+
+    /** 是否已经弹过一次定位权限申请（避免每次启动都打扰用户） */
+    public boolean isLocationAsked() {
+        return prefs.getBoolean(KEY_LOCATION_ASKED, false);
+    }
+
+    public void setLocationAsked(boolean asked) {
+        prefs.edit().putBoolean(KEY_LOCATION_ASKED, asked).apply();
     }
 
     /** 首次安装：默认加入北京 */

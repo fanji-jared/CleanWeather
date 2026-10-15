@@ -70,6 +70,7 @@ public class MainActivity extends Activity {
     private ProgressBar refreshSpin;
 
     private boolean refreshing;
+    private boolean locating;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -112,6 +113,15 @@ public class MainActivity extends Activity {
         int sb = statusBarHeight(this);
         findViewById(R.id.header).setPadding(0, sb + dp(6), 0, 0);
         loadSelectedCity();
+
+        // 首次启动就申请定位权限（此前缺失，导致权限默认关闭、无法定位）
+        // 用 post 延迟到界面布局完成后再申请，确保系统权限对话框能正常弹出
+        root.post(new Runnable() {
+            @Override
+            public void run() {
+                ensureLocationPermissionOnStart();
+            }
+        });
     }
 
     private void bindViews() {
@@ -187,7 +197,7 @@ public class MainActivity extends Activity {
     // ================= 数据加载 =================
 
     private void refresh(boolean showLoading) {
-        if (refreshing) return;
+        if (refreshing || city == null) return;
         refreshing = true;
         if (showLoading && data == null) loadingOverlay.setVisibility(View.VISIBLE);
         errorOverlay.setVisibility(View.GONE);
@@ -254,6 +264,7 @@ public class MainActivity extends Activity {
     // ================= 渲染 =================
 
     private void renderCity() {
+        if (city == null || cityName == null) return;
         cityName.setText(city.name);
         setTitle(city.name + " - " + getString(R.string.app_name));
     }
@@ -901,18 +912,47 @@ public class MainActivity extends Activity {
 
     // ================= 定位 =================
 
+    private boolean hasLocationPermission() {
+        if (Build.VERSION.SDK_INT < 23) return true;
+        return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean hasLocatedCity() {
+        for (City c : store.loadCities()) {
+            if (c.isLocated) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 启动时确保定位权限：
+     *  - 已授权且还没有"当前位置"城市时，自动定位一次；
+     *  - 未授权且从未申请过时，弹出系统权限对话框（修复"初次无提示、权限默认关闭"的问题）。
+     */
+    private void ensureLocationPermissionOnStart() {
+        if (hasLocationPermission()) {
+            if (!hasLocatedCity()) doLocate();
+            return;
+        }
+        if (Build.VERSION.SDK_INT < 23) return;
+        if (store.isLocationAsked()) return; // 已经问过，不再反复打扰
+        store.setLocationAsked(true);
+        requestPermissions(new String[]{
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+        }, REQ_LOCATION);
+    }
+
     private void requestLocationFlow() {
-        if (Build.VERSION.SDK_INT >= 23) {
-            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
-                    != PackageManager.PERMISSION_GRANTED
-                    && checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
-                    != PackageManager.PERMISSION_GRANTED) {
+        if (!hasLocationPermission()) {
+            if (Build.VERSION.SDK_INT >= 23) {
                 requestPermissions(new String[]{
                         Manifest.permission.ACCESS_FINE_LOCATION,
                         Manifest.permission.ACCESS_COARSE_LOCATION
                 }, REQ_LOCATION);
-                return;
             }
+            return;
         }
         doLocate();
     }
@@ -925,12 +965,25 @@ public class MainActivity extends Activity {
             for (int g : grantResults) {
                 if (g == PackageManager.PERMISSION_GRANTED) granted = true;
             }
-            if (granted) doLocate();
-            else Toast.makeText(this, R.string.locate_failed, Toast.LENGTH_SHORT).show();
+            if (granted) {
+                doLocate();
+            } else {
+                Toast.makeText(this, R.string.grant_location, Toast.LENGTH_LONG).show();
+            }
         }
     }
 
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // 页面销毁时取消定位监听，避免回调打到已销毁的 Activity 或造成监听器泄漏
+        Locator.cancelActive();
+        locating = false;
+    }
+
     private void doLocate() {
+        if (locating) return; // 防止连点导致重复定位、监听器堆积
+        locating = true;
         Toast.makeText(this, "正在定位…", Toast.LENGTH_SHORT).show();
         new Thread(new Runnable() {
             @Override
@@ -941,6 +994,7 @@ public class MainActivity extends Activity {
                     resolveCity(last[0], last[1]);
                     return;
                 }
+                // 注意：Locator 的回调统一在后台线程执行，可在其中安全地做网络请求
                 Locator.requestOnce(MainActivity.this, 12000, new Locator.Callback() {
                     @Override
                     public void onLocation(final double lat, final double lon) {
@@ -952,6 +1006,7 @@ public class MainActivity extends Activity {
                         runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
+                                locating = false;
                                 Toast.makeText(MainActivity.this, "定位失败：" + reason, Toast.LENGTH_SHORT).show();
                             }
                         });
@@ -991,6 +1046,8 @@ public class MainActivity extends Activity {
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
+                locating = false;
+                if (isFinishing() || isDestroyed()) return;
                 loadSelectedCity();
                 refresh(true);
             }

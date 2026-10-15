@@ -45,6 +45,7 @@ public class CityListActivity extends Activity {
     private ImageButton btnClear;
     private Map<String, WeatherApi.CityTemp> tempMap = new HashMap<>();
     private List<City> cities;
+    private boolean locating;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -259,6 +260,11 @@ public class CityListActivity extends Activity {
                     }
                 }
                 store.saveCities(all);
+                // 删除的正好是当前城市时，同步修正选中项，避免残留无效 id
+                if (c.id.equals(store.getSelectedCityId())) {
+                    store.setSelectedCityId(all.isEmpty() ? "" : all.get(0).id);
+                }
+                tempMap.remove(c.id);
                 loadCities(false);
             }
         });
@@ -401,6 +407,8 @@ public class CityListActivity extends Activity {
     }
 
     private void doLocate() {
+        if (locating) return; // 防止连点导致重复定位、监听器堆积
+        locating = true;
         Toast.makeText(this, "正在定位…", Toast.LENGTH_SHORT).show();
         new Thread(new Runnable() {
             @Override
@@ -410,6 +418,7 @@ public class CityListActivity extends Activity {
                     resolve(last[0], last[1]);
                     return;
                 }
+                // Locator 回调统一在后台线程执行，可安全做网络请求
                 Locator.requestOnce(CityListActivity.this, 12000, new Locator.Callback() {
                     @Override
                     public void onLocation(final double lat, final double lon) {
@@ -421,6 +430,7 @@ public class CityListActivity extends Activity {
                         runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
+                                locating = false;
                                 Toast.makeText(CityListActivity.this, "定位失败：" + reason, Toast.LENGTH_SHORT).show();
                             }
                         });
@@ -454,12 +464,22 @@ public class CityListActivity extends Activity {
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
+                        locating = false;
+                        if (isFinishing() || isDestroyed()) return;
                         setResult(RESULT_OK);
                         finish();
                     }
                 });
             }
         }).start();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // 页面销毁时取消定位监听
+        Locator.cancelActive();
+        locating = false;
     }
 
     private int dp(int v) {
