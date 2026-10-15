@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 半太阳 -->
+    <path
+        android:pathData="M6.5,17 a5.5,5.5 0 0 1 11,0"
+        android:fillColor="#FFC94D"/>
+    <!-- 地平线与箭头 -->
+    <path
+        android:pathData="M3,17 L21,17 M12,3 L12,6.8 M8.2,6.8 L12,3 L15.8,6.8"
+        android:strokeColor="#FFE6A0" android:strokeWidth="1.7" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000"/>
+</vector>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="white">#FFFFFF</color>
+    <color name="white_70">#B3FFFFFF</color>
+    <color name="white_50">#80FFFFFF</color>
+    <color name="white_30">#4DFFFFFF</color>
+    <color name="white_12">#1FFFFFFF</color>
+    <color name="card_bg">#33FFFFFF</color>
+    <color name="card_bg_dark">#26FFFFFF</color>
+    <color name="bg_day_top">#FF4A90D9</color>
+    <color name="bg_day_bottom">#FF87BF5A</color>
+    <color name="bg_night_top">#FF1B2A4A</color>
+    <color name="bg_night_bottom">#FF3D5A80</color>
+    <color name="bg_rain_top">#FF4A5D75</color>
+    <color name="bg_rain_bottom">#FF6B8CAE</color>
+    <color name="accent">#FFFFC94D</color>
+    <color name="accent_blue">#FF7EC8FF</color>
+    <color name="text_primary">#FFFFFF</color>
+    <color name="text_secondary">#CCFFFFFF</color>
+    <color name="black">#FF000000</color>
+</resources>

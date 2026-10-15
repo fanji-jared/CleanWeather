@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 月牙 -->
+    <path
+        android:pathData="M15,3 A9,9 0 1 0 15,21 A11.5,11.5 0 0 0 15,3 Z"
+        android:fillColor="#F8E9B8"/>
+    <!-- 星星 -->
+    <path
+        android:pathData="M18.5,5.5 l0.9,1.8 2,0.3 -1.45,1.4 0.35,2 -1.8,-0.95 -1.8,0.95 0.35,-2 -1.45,-1.4 2,-0.3 Z"
+        android:fillColor="#F8E9B8"/>
+</vector>
