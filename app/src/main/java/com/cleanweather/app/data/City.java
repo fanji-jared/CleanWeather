@@ -10,6 +10,7 @@ public class City {
     public String id = UUID.randomUUID().toString();
     public String name = "";
     public String detail = "";
+    public String type = "";   // 地名实体类型（城市 / 区县 / 道路 / 地址…）
     public double lat;
     public double lon;
     public boolean isLocated; // 是否为“当前定位”城市
@@ -19,6 +20,7 @@ public class City {
         o.put("id", id);
         o.put("name", name);
         o.put("detail", detail);
+        o.put("type", type);
         o.put("lat", lat);
         o.put("lon", lon);
         o.put("located", isLocated);
@@ -30,6 +32,7 @@ public class City {
         c.id = o.optString("id", UUID.randomUUID().toString());
         c.name = o.optString("name", "");
         c.detail = o.optString("detail", "");
+        c.type = o.optString("type", "");
         c.lat = o.optDouble("lat", 0);
         c.lon = o.optDouble("lon", 0);
         c.isLocated = o.optBoolean("located", false);

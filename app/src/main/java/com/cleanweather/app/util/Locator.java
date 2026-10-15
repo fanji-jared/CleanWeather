@@ -66,7 +66,7 @@ public final class Locator {
         }
     }
 
-    /** 最后已知位置（快速） */
+    /** 最后已知位置（优先 GPS，其次按精度取最优） */
     public static double[] lastKnown(Context context) {
         try {
             LocationManager lm = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
@@ -76,7 +76,8 @@ public final class Locator {
             for (String p : providers) {
                 try {
                     Location l = lm.getLastKnownLocation(p);
-                    if (l != null && (best == null || l.getTime() > best.getTime())) best = l;
+                    if (l == null) continue;
+                    if (best == null || better(l, best)) best = l;
                 } catch (SecurityException ignore) {
                 } catch (Exception ignore) {
                 }
@@ -90,6 +91,19 @@ public final class Locator {
         }
     }
 
+    /** 选取更优的位置：优先 GPS provider，其次比较精度与新鲜度 */
+    private static boolean better(Location candidate, Location current) {
+        boolean cGps = "gps".equals(candidate.getProvider());
+        boolean bGps = "gps".equals(current.getProvider());
+        if (cGps != bGps) return cGps;
+        boolean cFresh = isFresh(candidate), bFresh = isFresh(current);
+        if (cFresh != bFresh) return cFresh;
+        float ca = candidate.hasAccuracy() ? candidate.getAccuracy() : Float.MAX_VALUE;
+        float ba = current.hasAccuracy() ? current.getAccuracy() : Float.MAX_VALUE;
+        if (ca != ba) return ca < ba;
+        return candidate.getTime() > current.getTime();
+    }
+
     private static boolean isFresh(Location l) {
         long age = SystemClock.elapsedRealtimeNanos() - l.getElapsedRealtimeNanos();
         return age < 10L * 60L * 1000L * 1000L * 1000L; // 10 分钟内
@@ -97,6 +111,8 @@ public final class Locator {
 
     /**
      * 请求一次新鲜定位，最长等待 timeoutMs。
+     * 使用高精度（GPS 优先）定位，并在一小段时间内取"最优精度"的一次定位结果，
+     * 以便反向地理编码能够落到道路/门牌级别。
      * 回调 {@link Callback} 一定在后台线程执行。
      */
     @SuppressLint("MissingPermission")
@@ -112,23 +128,40 @@ public final class Locator {
 
         final Object doneLock = new Object();
         final boolean[] done = {false};
+        final Location[] best = {null};
 
-        final LocationListener listener = new LocationListener() {
+        final Runnable finish = new Runnable() {
             @Override
-            public void onLocationChanged(Location location) {
+            public void run() {
                 synchronized (doneLock) {
                     if (done[0]) return;
                     done[0] = true;
                 }
                 cancelActive();
-                final double lat = location.getLatitude();
-                final double lon = location.getLongitude();
+                Location l = best[0];
+                if (l == null) return;
+                final double lat = l.getLatitude();
+                final double lon = l.getLongitude();
                 CALLBACK_EXEC.execute(new Runnable() {
                     @Override
                     public void run() {
                         cb.onLocation(lat, lon);
                     }
                 });
+            }
+        };
+
+        final LocationListener listener = new LocationListener() {
+            @Override
+            public void onLocationChanged(Location location) {
+                synchronized (doneLock) {
+                    if (done[0]) return;
+                    if (best[0] == null || better(location, best[0])) best[0] = location;
+                }
+                // 精度足够好则立即返回，否则继续等待更精确的一次定位
+                if (location.hasAccuracy() && location.getAccuracy() <= 40f) {
+                    finish.run();
+                }
             }
 
             @Override
@@ -150,20 +183,29 @@ public final class Locator {
         }
 
         try {
-            Criteria criteria = new Criteria();
-            criteria.setAccuracy(Criteria.ACCURACY_COARSE);
+            // 优先高精度（GPS）provider；无权限/无 GPS 时回退到粗略定位
             String provider = null;
             try {
-                provider = lm.getBestProvider(criteria, true);
+                Criteria fine = new Criteria();
+                fine.setAccuracy(Criteria.ACCURACY_FINE);
+                provider = lm.getBestProvider(fine, true);
             } catch (Exception ignore) {
+            }
+            if (provider == null) {
+                try {
+                    Criteria coarse = new Criteria();
+                    coarse.setAccuracy(Criteria.ACCURACY_COARSE);
+                    provider = lm.getBestProvider(coarse, true);
+                } catch (Exception ignore) {
+                }
             }
 
             boolean registered = false;
             if (provider != null) {
                 try {
-                    // minTime=1000ms 降低回调频率，避免主线程被高频位置更新刷爆
                     lm.requestLocationUpdates(provider, 1000L, 0f, listener, Looper.getMainLooper());
                     registered = true;
+                } catch (SecurityException ignore) {
                 } catch (Exception ignore) {
                 }
             }
@@ -191,6 +233,19 @@ public final class Locator {
             return;
         }
 
+        // 早鸟计时：拿到首个可用定位后再多等一小会儿，取更精确的一次结果
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Thread.sleep(Math.min(4000, Math.max(1500, timeoutMs / 3)));
+                } catch (InterruptedException ignore) {
+                }
+                if (best[0] != null) finish.run();
+            }
+        }, "locator-settle").start();
+
+        // 硬超时：仍未拿到定位则回退到最后已知位置
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -200,7 +255,20 @@ public final class Locator {
                 }
                 synchronized (doneLock) {
                     if (done[0]) return;
-                    done[0] = true;
+                    if (best[0] != null) {
+                        done[0] = true;
+                    }
+                }
+                if (best[0] != null) {
+                    cancelActive();
+                    final Location l = best[0];
+                    CALLBACK_EXEC.execute(new Runnable() {
+                        @Override
+                        public void run() {
+                            cb.onLocation(l.getLatitude(), l.getLongitude());
+                        }
+                    });
+                    return;
                 }
                 cancelActive();
                 double[] last = lastKnown(context);

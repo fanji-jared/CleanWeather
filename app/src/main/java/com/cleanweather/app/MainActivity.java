@@ -8,9 +8,12 @@ import com.cleanweather.app.ui.AqiBarView;
 import com.cleanweather.app.ui.IconMapper;
 import com.cleanweather.app.ui.PullScrollView;
 import com.cleanweather.app.ui.RangeBarView;
+import com.cleanweather.app.update.UpdateService;
 import com.cleanweather.app.util.FormatUtil;
 import com.cleanweather.app.util.Locator;
+import com.cleanweather.app.util.SystemBar;
 import com.cleanweather.app.util.TimeUtil;
+import com.cleanweather.app.util.UpdateFlow;
 
 import android.Manifest;
 import android.animation.ArgbEvaluator;
@@ -26,7 +29,6 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
-import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -34,8 +36,6 @@ import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
-import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -67,7 +67,10 @@ public class MainActivity extends Activity {
     private View loadingOverlay, errorOverlay;
     private TextView errorText;
     private ImageButton btnRefresh, btnLocate;
-    private ProgressBar refreshSpin;
+
+    private View refreshHeader;
+    private ImageView refreshIcon;
+    private TextView refreshText;
 
     private boolean refreshing;
     private boolean locating;
@@ -108,10 +111,13 @@ public class MainActivity extends Activity {
                 requestLocationFlow();
             }
         });
+        findViewById(R.id.btnSettings).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(new Intent(MainActivity.this, SettingsActivity.class));
+            }
+        });
 
-        // 状态栏高度占位
-        int sb = statusBarHeight(this);
-        findViewById(R.id.header).setPadding(0, sb + dp(6), 0, 0);
         loadSelectedCity();
 
         // 首次启动就申请定位权限（此前缺失，导致权限默认关闭、无法定位）
@@ -120,6 +126,12 @@ public class MainActivity extends Activity {
             @Override
             public void run() {
                 ensureLocationPermissionOnStart();
+                // 安装成功后：清理上一次下载的更新包（避免占用空间）
+                UpdateService.cleanup(MainActivity.this);
+                // 启动时自动检查升级（可在设置中关闭）
+                if (store.isAutoCheckUpdate()) {
+                    UpdateFlow.checkAndPrompt(MainActivity.this, false);
+                }
             }
         });
     }
@@ -139,22 +151,47 @@ public class MainActivity extends Activity {
         footer = findViewById(R.id.footer);
         btnRefresh = findViewById(R.id.btnRefresh);
         btnLocate = findViewById(R.id.btnLocate);
+        refreshHeader = findViewById(R.id.refreshHeader);
+        refreshIcon = findViewById(R.id.refreshIcon);
+        refreshText = findViewById(R.id.refreshText);
     }
 
     private void setupStatusBar() {
-        if (Build.VERSION.SDK_INT >= 21) {
-            getWindow().setStatusBarColor(Color.TRANSPARENT);
-        }
+        // 状态栏 / 导航栏配色跟随顶部、底部背景色（在渲染时动态更新）
+        SystemBar.applyGradient(this, getResources().getColor(R.color.bg_day_top),
+                getResources().getColor(R.color.bg_day_bottom));
     }
 
-    /** 顶部下拉刷新 */
+    /** 顶部下拉刷新：显示刷新图标与"上次更新"提示，松手后重新获取数据 */
     private void setupPullToRefresh() {
+        if (refreshHeader != null) {
+            scroll.setRefreshHeader(refreshHeader, refreshIcon);
+        }
         scroll.setPullCallback(new PullScrollView.PullCallback() {
             @Override
+            public void onPullProgress(float progress) {
+                if (refreshText == null || refreshing) return;
+                if (progress >= 1f) {
+                    refreshText.setText(getString(R.string.pull_release_refresh, lastUpdateText()));
+                } else {
+                    refreshText.setText(getString(R.string.pull_last_update, lastUpdateText()));
+                }
+            }
+
+            @Override
             public void onPullRefresh() {
+                if (refreshText != null) {
+                    refreshText.setText(getString(R.string.pull_last_update, lastUpdateText()));
+                }
                 refresh(false);
             }
         });
+    }
+
+    /** 最近一次天气数据的更新时间文案（打开应用/下拉刷新后自动更新） */
+    private String lastUpdateText() {
+        long t = store.getLastUpdateTime();
+        return t > 0 ? TimeUtil.formatUpdateAt(t) : getString(R.string.last_update_unknown);
     }
 
     private void loadSelectedCity() {
@@ -231,6 +268,7 @@ public class MainActivity extends Activity {
                         @Override
                         public void run() {
                             store.saveWeatherCache(city.id, body);
+                            store.setLastUpdateTime(System.currentTimeMillis());
                             data = wd;
                             render();
                         }
@@ -255,6 +293,8 @@ public class MainActivity extends Activity {
                             refreshing = false;
                             btnRefresh.setAlpha(1f);
                             loadingOverlay.setVisibility(View.GONE);
+                            // 刷新结束收起下拉头部
+                            if (scroll != null) scroll.collapseHeader();
                         }
                     });
                 }
@@ -320,9 +360,8 @@ public class MainActivity extends Activity {
         GradientDrawable gd = new GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM, new int[]{top, bottom});
         root.setBackground(gd);
-        if (Build.VERSION.SDK_INT >= 21) {
-            getWindow().setStatusBarColor(Color.TRANSPARENT);
-        }
+        // 状态栏取顶部色、导航栏取底部色，让顶部/底部与系统栏浑然一体
+        SystemBar.applyGradient(this, top, bottom);
     }
 
     /** 通用卡片容器 */
@@ -1021,7 +1060,7 @@ public class MainActivity extends Activity {
     }
 
     private void resolveCity(double lat, double lon) {
-        City resolved = WeatherApi.reverseGeocode(lat, lon);
+        City resolved = WeatherApi.resolveNearestPlace(lat, lon);
         if (resolved == null) {
             resolved = new City();
             resolved.name = "当前位置";

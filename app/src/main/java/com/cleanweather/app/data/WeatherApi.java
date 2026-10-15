@@ -13,8 +13,10 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -22,10 +24,9 @@ import java.util.concurrent.TimeUnit;
  * MSN 天气 API 客户端（直接调用网站同源接口）
  *
  * 数据接口均经 assets.msn.cn 代理：
- *  - /service/weather/overview          完整预报（当前/逐小时/10日/预警/生活指数）
- *  - /service/weather/current           多城市批量当前温度
- *  - /service/weather/locations/search   经纬度反查地名
- *  - /service/weather/api/v6/Places/AutoSuggest  城市搜索（307 重定向）
+ *  - /service/weather/overview            完整预报（当前/逐小时/10日/预警/生活指数）
+ *  - /service/weather/current             多城市批量当前温度
+ *  - /service/weather/locations/search    经纬度反查地名 / 关键词地名检索
  */
 public final class WeatherApi {
 
@@ -37,7 +38,6 @@ public final class WeatherApi {
     private static final String API_KEY = "j5i4gDqHL6nGYwx5wi5kRhXjtf2c5qgFX9fzfk0TOo";
     private static final String LOC_API_KEY = "0QfOX3Vn51YCzitbLaRkTTBadtWpgTN8NZLW0C1SEM";
     private static final String APP_ID = "9e21380c-ff19-4c78-b4ea-19558e93a5d3";
-    private static final String AUTOSUGGEST_APPID = "EDEC3CB74CF190BBBE26DF7938F3D961E925F593";
     private static final String UA =
             "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
 
@@ -173,106 +173,261 @@ public final class WeatherApi {
         public boolean ok;
     }
 
-    /** 经纬度反查地名 */
-    public static City reverseGeocode(double lat, double lon) {
-        try {
-            String url = BASE + "/weather/locations/search"
-                    + "?apikey=" + LOC_API_KEY
-                    + "&ocid=localizelocation-peregrine"
-                    + "&cm=zh-cn&it=web&user=" + userId() + "&scn=ANON"
-                    + "&lat=" + String.format(Locale.US, "%.6f", lat)
-                    + "&lon=" + String.format(Locale.US, "%.6f", lon)
-                    + "&locale=zh-cn";
-            String body = httpGet(url);
-            JSONObject root = new JSONObject(body);
-            JSONArray value = root.getJSONArray("value");
-            if (value.length() == 0) return null;
-            JSONArray responses = value.getJSONObject(0).getJSONArray("responses");
-            if (responses.length() == 0) return null;
-            JSONArray locations = responses.getJSONObject(0).getJSONArray("locations");
-            if (locations.length() == 0) return null;
-            JSONObject loc = locations.getJSONObject(0);
+    // ================= 地名检索（与 MSN 搜索同源） =================
 
-            City city = new City();
-            String locality = loc.optString("locality", "");
-            String adminDistrict = loc.optString("adminDistrict", "");
-            String adminDistrict2 = loc.optString("adminDistrict2", "");
-            String country = loc.optString("countryRegion", "");
+    /** 地名实体：省 / 市 / 区县 / 街道 / 道路 / 门牌地址 / 地点 */
+    public static class Place {
+        public String name = "";
+        public String displayName = "";
+        public String locality = "";
+        public String adminDistrict = "";   // 省级
+        public String adminDistrict2 = "";  // 市级或区级
+        public String entityType = "Place";
+        public double lat;
+        public double lon;
 
-            // 名称：市 + 区
-            StringBuilder name = new StringBuilder();
-            if (!adminDistrict2.isEmpty()) name.append(adminDistrict2);
-            else if (!adminDistrict.isEmpty()) name.append(adminDistrict);
-            if (!locality.isEmpty() && !adminDistrict2.equals(locality)) {
-                name.append(" · ").append(locality);
+        /** 是否为细粒度实体（道路 / 门牌 / 地点），即"可直接添加的地址" */
+        public boolean isFine() {
+            String t = entityType == null ? "" : entityType.toLowerCase(Locale.US);
+            return t.contains("address") || t.contains("road") || t.contains("street")
+                    || t.contains("pointofinterest") || t.contains("business");
+        }
+
+        /** 人类可读的实体类型标签 */
+        public String typeLabel() {
+            String t = entityType == null ? "" : entityType;
+            switch (t) {
+                case "AdminDivision1": return "省份";
+                case "AdminDivision2": return "区县";
+                case "AdminDivision3": return "区县";
+                case "PopulatedPlace": return "城市";
+                case "RoadBlock": return "道路";
+                case "Address": return "地址";
+                case "PointOfInterest": return "地点";
+                case "Neighborhood": return "街区";
+                default: return t.isEmpty() ? "地点" : t;
             }
-            if (name.length() == 0) name.append(loc.optString("name", "当前位置"));
-            city.name = name.toString();
-
-            StringBuilder detail = new StringBuilder();
-            if (!adminDistrict.isEmpty()) detail.append(adminDistrict);
-            if (!country.isEmpty()) {
-                if (detail.length() > 0) detail.append(" · ");
-                detail.append(country);
-            }
-            city.detail = detail.toString();
-
-            // 坐标优先使用服务端回传的数据源坐标
-            city.lat = lat;
-            city.lon = lon;
-            try {
-                JSONArray ds = loc.getJSONArray("dataSources");
-                if (ds.length() > 0) {
-                    JSONObject coord = ds.getJSONObject(0).optJSONObject("coordinates");
-                    if (coord != null) {
-                        city.lat = coord.optDouble("lat", lat);
-                        city.lon = coord.optDouble("lon", lon);
-                    }
-                }
-            } catch (Exception ignore) {
-            }
-            city.isLocated = true;
-            return city;
-        } catch (Exception e) {
-            Log.e(TAG, "reverseGeocode failed", e);
-            return null;
         }
     }
 
-    /** 城市搜索（Bing Places AutoSuggest） */
+    private static List<Place> parsePlaces(JSONArray locations, double fallbackLat, double fallbackLon) {
+        List<Place> out = new ArrayList<>();
+        if (locations == null) return out;
+        for (int i = 0; i < locations.length(); i++) {
+            JSONObject loc = locations.optJSONObject(i);
+            if (loc == null) continue;
+            Place p = new Place();
+            p.name = loc.optString("name", "");
+            if (p.name.isEmpty()) continue;
+            p.displayName = loc.optString("displayName", "");
+            p.locality = loc.optString("locality", "");
+            p.adminDistrict = loc.optString("adminDistrict", "");
+            p.adminDistrict2 = loc.optString("adminDistrict2", "");
+            p.entityType = loc.optString("entityType", "Place");
+            JSONObject coord = loc.optJSONObject("coordinates");
+            if (coord != null) {
+                p.lat = coord.optDouble("lat", fallbackLat);
+                p.lon = coord.optDouble("lon", fallbackLon);
+            } else {
+                p.lat = fallbackLat;
+                p.lon = fallbackLon;
+            }
+            out.add(p);
+        }
+        return out;
+    }
+
+    /**
+     * 调用 MSN 地名检索接口。
+     * @param query 文本关键词（可为空）
+     * @param count 返回条数
+     * @param lat   反查纬度（可为 null）  @param lon 反查经度（可为 null）
+     */
+    public static List<Place> searchLocations(String query, int count, Double lat, Double lon) {
+        try {
+            StringBuilder url = new StringBuilder(BASE + "/weather/locations/search")
+                    .append("?apikey=").append(LOC_API_KEY)
+                    .append("&ocid=localizelocation-peregrine")
+                    .append("&cm=zh-cn&it=web&user=").append(userId()).append("&scn=ANON")
+                    .append("&locale=zh-cn&count=").append(count);
+            if (query != null && !query.isEmpty()) {
+                url.append("&query=").append(URLEncoder.encode(query, "UTF-8"));
+            }
+            if (lat != null && lon != null) {
+                url.append("&lat=").append(String.format(Locale.US, "%.5f", lat))
+                        .append("&lon=").append(String.format(Locale.US, "%.5f", lon));
+            }
+            String body = httpGet(url.toString());
+            JSONObject root = new JSONObject(body);
+            JSONArray value = root.getJSONArray("value");
+            if (value.length() == 0) return new ArrayList<>();
+            JSONArray responses = value.getJSONObject(0).optJSONArray("responses");
+            if (responses == null || responses.length() == 0) return new ArrayList<>();
+            JSONArray locations = responses.getJSONObject(0).optJSONArray("locations");
+            double fl = lat == null ? 0 : lat;
+            double fn = lon == null ? 0 : lon;
+            return parsePlaces(locations, fl, fn);
+        } catch (Exception e) {
+            Log.e(TAG, "searchLocations failed: " + query, e);
+        }
+        return new ArrayList<>();
+    }
+
+    /**
+     * 单点反向地理编码（经纬度 → 覆盖该点的地名实体）。
+     * 优先返回"细粒度实体"（道路 / 门牌 / 地点），这样自动定位才能落到
+     * 最近的可添加地址上（如「大安区太大路」），而不是只到区县。
+     */
+    public static Place reverseGeocodePlace(double lat, double lon) {
+        List<Place> list = searchLocations(null, 8, lat, lon);
+        if (list.isEmpty()) return null;
+        Place best = list.get(0);
+        double bestDist = distanceMeters(lat, lon, best.lat, best.lon);
+        for (Place p : list) {
+            double d = distanceMeters(lat, lon, p.lat, p.lon);
+            if (p.isFine() && !best.isFine()) {
+                best = p;
+                bestDist = d;
+            } else if (p.isFine() == best.isFine() && d < bestDist) {
+                best = p;
+                bestDist = d;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * 依据定位坐标解析「最近的可添加地址」：
+     * 1) 先反查该点，若已是道路 / 门牌等细粒度实体，直接采用；
+     * 2) 否则在其周边做环形采样反查，命中细粒度实体后取距离最近的一个；
+     * 3) 仍无则退回到行政级别结果。
+     * 天气坐标始终使用用户真实经纬度，避免被"行政区中心点"带偏。
+     */
+    public static City resolveNearestPlace(double lat, double lon) {
+        Place center = reverseGeocodePlace(lat, lon);
+        if (center != null && center.isFine()) {
+            return cityFromPlace(center, lat, lon);
+        }
+
+        Place best = null;
+        double bestDist = Double.MAX_VALUE;
+        // 约 120m / 250m / 500m / 900m：由近到远寻找最近的道路 / 门牌 / 地点实体
+        double[] radii = {0.0011, 0.0022, 0.0045, 0.0081};
+        for (double r : radii) {
+            boolean hit = false;
+            for (int k = 0; k < 8; k++) {
+                double ang = Math.toRadians(k * 45.0);
+                double dLat = r * Math.cos(ang);
+                double dLon = r * Math.sin(ang) / Math.max(0.2, Math.cos(Math.toRadians(lat)));
+                Place p = reverseGeocodePlace(lat + dLat, lon + dLon);
+                if (p == null || !p.isFine()) continue;
+                hit = true;
+                double d = distanceMeters(lat, lon, p.lat, p.lon);
+                if (d < bestDist) {
+                    bestDist = d;
+                    best = p;
+                }
+            }
+            if (hit) break; // 命中即止，取该环内最近的一条
+        }
+
+        if (best != null) return cityFromPlace(best, lat, lon);
+        if (center != null) return cityFromPlace(center, lat, lon);
+        return null;
+    }
+
+    private static City cityFromPlace(Place p, double lat, double lon) {
+        City c = new City();
+        c.name = shortName(p);
+        c.detail = adminChain(p);
+        c.type = p.entityType;
+        c.lat = lat;   // 使用用户真实坐标，确保天气贴合所在地
+        c.lon = lon;
+        c.isLocated = true;
+        return c;
+    }
+
+    /** 去掉省 / 市前缀，得到较短的定位名（如「大安区太大路」） */
+    private static String shortName(Place p) {
+        String s = p.name;
+        if (!p.adminDistrict.isEmpty() && s.startsWith(p.adminDistrict)) {
+            s = s.substring(p.adminDistrict.length());
+        }
+        String cityTok = "";
+        if (p.locality.endsWith("市")) cityTok = p.locality;
+        else if (p.adminDistrict2.endsWith("市")) cityTok = p.adminDistrict2;
+        if (!cityTok.isEmpty() && s.startsWith(cityTok)) {
+            s = s.substring(cityTok.length());
+        }
+        return s.isEmpty() ? p.name : s;
+    }
+
+    /** 省 · 市 · 区 链条（去重并按行政级别排序） */
+    private static String adminChain(Place p) {
+        List<String> parts = new ArrayList<>();
+        for (String t : new String[]{p.adminDistrict, p.adminDistrict2, p.locality}) {
+            if (t == null || t.isEmpty() || parts.contains(t)) continue;
+            parts.add(t);
+        }
+        java.util.Collections.sort(parts, new java.util.Comparator<String>() {
+            @Override
+            public int compare(String a, String b) {
+                return adminRank(a) - adminRank(b);
+            }
+        });
+        StringBuilder sb = new StringBuilder();
+        for (String t : parts) {
+            if (sb.length() > 0) sb.append(" · ");
+            sb.append(t);
+        }
+        return sb.toString();
+    }
+
+    private static int adminRank(String s) {
+        if (s.endsWith("省") || s.endsWith("自治区") || s.endsWith("特别行政区")) return 0;
+        if (s.endsWith("市")) return 1;
+        return 2;
+    }
+
+    private static double distanceMeters(double lat1, double lon1, double lat2, double lon2) {
+        double R = 6371000.0;
+        double dLat = Math.toRadians(lat2 - lat1);
+        double dLon = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+    }
+
+    /** 去掉省前缀后的地名标题（与 MSN 搜索下拉一致，如「自贡市大安区太大路」） */
+    private static String placeTitle(Place p) {
+        String s = p.name == null ? "" : p.name;
+        if (!p.adminDistrict.isEmpty() && s.startsWith(p.adminDistrict)) {
+            s = s.substring(p.adminDistrict.length());
+        }
+        return s.isEmpty() ? p.name : s;
+    }
+
+    /** 位置搜索（与 MSN 天气搜索体验一致，返回可直接添加的地点） */
     public static List<City> searchCities(String query) {
         List<City> out = new ArrayList<>();
-        try {
-            String url = BASE + "/weather/api/v6/Places/AutoSuggest"
-                    + "?appid=" + AUTOSUGGEST_APPID
-                    + "&count=10&q=" + URLEncoder.encode(query, "UTF-8")
-                    + "&setmkt=zh-cn&setlang=zh-cn&types=Place,Address,Business"
-                    + "&abbrtext=1&setflight=&activityId=" + UUID.randomUUID();
-            String body = httpGet(url);
-            JSONObject root = new JSONObject(body);
-            JSONArray value = root.optJSONArray("value");
-            if (value == null) return out;
-            for (int i = 0; i < value.length(); i++) {
-                JSONObject item = value.optJSONObject(i);
-                if (item == null) continue;
-                if (!"Place".equals(item.optString("_type", "Place"))) continue;
-                JSONObject geo = item.optJSONObject("geo");
-                if (geo == null) continue;
-                double lat = geo.optDouble("latitude", Double.NaN);
-                double lon = geo.optDouble("longitude", Double.NaN);
-                if (Double.isNaN(lat) || Double.isNaN(lon)) continue;
-                City c = new City();
-                c.name = item.optString("name", "");
-                if (c.name.isEmpty()) continue;
-                JSONObject addr = item.optJSONObject("address");
-                if (addr != null) c.detail = addr.optString("text", "");
-                c.lat = lat;
-                c.lon = lon;
-                c.isLocated = false;
-                out.add(c);
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "searchCities failed", e);
+        if (query == null) return out;
+        String q = query.trim();
+        if (q.isEmpty()) return out;
+        List<Place> places = searchLocations(q, 15, null, null);
+        Set<String> seen = new HashSet<>();
+        for (Place p : places) {
+            String key = p.name + "@" + String.format(Locale.US, "%.3f,%.3f", p.lat, p.lon);
+            if (!seen.add(key)) continue;
+            City c = new City();
+            c.name = placeTitle(p);
+            String chain = adminChain(p);
+            c.detail = chain.isEmpty() ? p.typeLabel() : p.typeLabel() + " · " + chain;
+            c.type = p.entityType;
+            c.lat = p.lat;
+            c.lon = p.lon;
+            c.isLocated = false;
+            out.add(c);
         }
         return out;
     }

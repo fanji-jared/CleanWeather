@@ -31,8 +31,8 @@
 | --- | --- |
 | 应用名 | 纯净天气（CleanWeather） |
 | 包名 | `com.cleanweather.app` |
-| 版本 | 1.0.2（versionCode 3） |
-| 产物 | `dist/CleanWeather-1.0.2-release.apk`（约 115 KB，已签名） |
+| 版本 | 1.0.3（versionCode 4） |
+| 产物 | `dist/CleanWeather-1.0.3-release.apk`（已签名） |
 | 最低版本 | **Android 5.0（API 21）** |
 | 目标版本 | Android 14（API 34） |
 | 第三方依赖 | **零依赖**（纯 Java + Android 原生 API） |
@@ -477,8 +477,8 @@ android {
         applicationId "com.cleanweather.app"
         minSdk 21           // ★ 兼容 Android 5.0+
         targetSdk 34
-        versionCode 3
-        versionName "1.0.2"
+        versionCode 4
+        versionName "1.0.3"
     }
     signingConfigs {
         release {
@@ -642,6 +642,71 @@ jarsigner -verify app-release.apk     # → "jar verified."
 
 > 本节记录每一次版本迭代中的 Bug 修复与改进，方便回溯与学习。
 > 每一个条目都写清了「现象 / 根因 / 修复」，这正是初学者最该积累的部分。
+
+### v1.0.3（versionCode 4）— 定位精度、搜索体验与设置中心
+
+**发布日期**：2026-10-15
+
+本次为功能增强版本，围绕「定位更准、搜索更顺、可配置、可自更新」四件事展开。
+
+#### ✨ 新增 1：自动定位到「最近的可添加地址」（道路 / 乡镇级）
+
+- **现象**：自动定位最多只能到「市 / 区」（如仅能定位到「大安区」），而用户在 MSN 上
+  可以搜索到「大安区何市镇」「太大路」「何市客运站」等道路级地点，却必须手动输入。
+- **根因**：反向地理编码默认只取 1 条粗粒度结果（`Postcode1` / 行政区），未请求细粒度实体。
+- **修复**：改用 `/weather/locations/search` 接口并传入 `count=8`，反查时**优先取非行政区类型**
+  （`Address` / `RoadBlock` / `PointOfInterest`）；若单点反查未命中细粒度实体，则在
+  120m / 250m / 500m / 900m 四个半径、8 个方向做**环形采样反查**，取距离最近的道路 / 门牌 / 地点。
+  天气坐标仍使用用户真实经纬度，避免被「行政区中心点」带偏。
+- **涉及文件**：[WeatherApi.java](app/src/main/java/com/cleanweather/app/data/WeatherApi.java)
+
+#### ✨ 新增 2：搜索体验对齐 MSN（输入即联想）
+
+- **现象**：原搜索只能搜索到城市 / 区县，且需要回车确认，体验与 MSN 不一致。
+- **修复**：搜索实现由 AutoSuggest 切换到 `/weather/locations/search?query=`，可返回道路 / 地点级实体；
+  新增 **300ms 防抖输入联想**（边打字边搜）与**过期响应丢弃**（只渲染与当前输入一致的请求结果）。
+- **涉及文件**：[CityListActivity.java](app/src/main/java/com/cleanweather/app/CityListActivity.java)、
+  [WeatherApi.java](app/src/main/java/com/cleanweather/app/data/WeatherApi.java)
+
+#### ✨ 新增 3：设置中心（[SettingsActivity.java](app/src/main/java/com/cleanweather/app/SettingsActivity.java)）
+
+- **自动检查升级**：开关默认开启，每次启动自动检测新版本；
+- **权限管理**：通知权限、精准定位权限的获取与状态展示，被拒绝时引导至系统设置；
+- **手动检查升级**：一键立即检查；
+- **版本信息**：软件名 + 版本号；
+- **分享此应用**：调用系统分享（微信 / QQ 等）发送软件介绍与最新版本下载地址；
+- **关于作者**：作者「繁寂」与 GitHub 项目地址（图标 + 地址，点击调用浏览器打开）。
+
+#### ✨ 新增 4：自动更新（检查 / 提示 / 后台下载 / 安装）
+
+- 启动时若开启自动检查升级，则拉取 `github.com/fanji-jared/CleanWeather/releases` 的最新版本号与说明，
+  与本地版本比较；有新版本则弹框展示更新说明（超长自动截断），可**后台更新**或**取消**。
+- 后台更新由前台服务 [UpdateService.java](app/src/main/java/com/cleanweather/app/update/UpdateService.java)
+  下载最新 APK，**通知栏实时显示进度**；下载完成调起系统安装器，安装成功后再次打开应用会**清理已下载的更新包**；
+  下载失败同样在通知栏提示并删除不完整的分包。
+- 版本检查优先走 GitHub API，被限流时回退解析 `releases.atom` 订阅源（[UpdateChecker.java](app/src/main/java/com/cleanweather/app/util/UpdateChecker.java)）。
+
+#### 🐞 修复 1：主页顶部存在多余高度
+
+- **现象**：最顶部组件与屏幕实际顶部之间有一块多余空隙。
+- **根因**：页面在已由系统处理状态栏内边距的情况下，又手动叠加了 `statusBarHeight` 内边距，形成双重留白。
+- **修复**：统一去掉各页面手动叠加的状态栏内边距，改由 [SystemBar.java](app/src/main/java/com/cleanweather/app/util/SystemBar.java)
+  负责状态栏配色，使内容紧贴状态栏下方。
+
+#### 🎨 体验优化：下拉刷新与系统栏配色
+
+- 主页新增下拉刷新头部：下拉过程显示刷新图标与「上次更新时间」提示，达到阈值提示「松手刷新」，
+  松手后重新拉取数据并渲染，结束后动画收起头部。
+- 状态栏取页面顶部色、导航栏取页面底部色，并根据背景明暗自动切换图标深浅，使顶部 / 底部与系统栏浑然一体
+  （主页为动态渐变，子页面为固定色）。
+
+#### ✅ 本次验证
+
+- `gradle assembleDebug` / `assembleRelease` → **BUILD SUCCESSFUL**；
+- `aapt2 dump badging` → `versionCode=4`、`versionName=1.0.3`、`sdkVersion=21`、`targetSdkVersion=34`；
+- `apksigner verify` → 签名校验通过。
+
+---
 
 ### v1.0.2（versionCode 3）— 渲染闪退修复
 

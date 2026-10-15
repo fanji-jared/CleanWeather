@@ -17,6 +17,8 @@ public class CityStore {
     private static final String KEY_CITIES = "cities";
     private static final String KEY_SELECTED = "selected_city_id";
     private static final String KEY_LOCATION_ASKED = "location_asked";
+    private static final String KEY_AUTO_UPDATE = "auto_check_update";
+    private static final String KEY_LAST_UPDATE = "last_update_time";
     private static final String KEY_CACHE_PREFIX = "cache_";
 
     private final SharedPreferences prefs;
@@ -72,6 +74,24 @@ public class CityStore {
 
     public void setLocationAsked(boolean asked) {
         prefs.edit().putBoolean(KEY_LOCATION_ASKED, asked).apply();
+    }
+
+    /** 是否自动检查升级（默认开启） */
+    public boolean isAutoCheckUpdate() {
+        return prefs.getBoolean(KEY_AUTO_UPDATE, true);
+    }
+
+    public void setAutoCheckUpdate(boolean on) {
+        prefs.edit().putBoolean(KEY_AUTO_UPDATE, on).apply();
+    }
+
+    /** 最近一次天气数据更新时间（用于下拉刷新的"最后更新"提示） */
+    public long getLastUpdateTime() {
+        return prefs.getLong(KEY_LAST_UPDATE, 0L);
+    }
+
+    public void setLastUpdateTime(long time) {
+        prefs.edit().putLong(KEY_LAST_UPDATE, time).apply();
     }
 
     /** 首次安装：默认加入北京 */

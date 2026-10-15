@@ -5,6 +5,7 @@ import com.cleanweather.app.data.WeatherApi;
 import com.cleanweather.app.data.WeatherData;
 import com.cleanweather.app.ui.IconMapper;
 import com.cleanweather.app.util.FormatUtil;
+import com.cleanweather.app.util.SystemBar;
 import com.cleanweather.app.util.TimeUtil;
 
 import android.app.Activity;
@@ -48,7 +49,8 @@ public class DailyDetailActivity extends Activity {
                 finish();
             }
         });
-        findViewById(R.id.header).setPadding(0, statusBarHeight() + dp(2), 0, 0);
+        findViewById(R.id.header).setPadding(0, dp(2), 0, 0);
+        SystemBar.applyHeader(this, 0xFF1B2A4A, 0xFF1B2A4A);
         contentList = findViewById(R.id.contentList);
 
         // 读缓存
@@ -315,11 +317,5 @@ public class DailyDetailActivity extends Activity {
 
     private int dp(int v) {
         return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
-    }
-
-    private int statusBarHeight() {
-        int res = getResources().getIdentifier("status_bar_height", "dimen", "android");
-        if (res > 0) return getResources().getDimensionPixelSize(res);
-        return dp(24);
     }
 }

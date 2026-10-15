@@ -6,6 +6,7 @@ import com.cleanweather.app.data.WeatherApi;
 import com.cleanweather.app.ui.IconMapper;
 import com.cleanweather.app.util.FormatUtil;
 import com.cleanweather.app.util.Locator;
+import com.cleanweather.app.util.SystemBar;
 
 import android.Manifest;
 import android.app.Activity;
@@ -47,6 +48,10 @@ public class CityListActivity extends Activity {
     private List<City> cities;
     private boolean locating;
 
+    /** 输入联想：边打字边搜（与 MSN 搜索体验一致） */
+    private final android.os.Handler searchHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private Runnable pendingSearch;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -58,7 +63,8 @@ public class CityListActivity extends Activity {
         searchInput = findViewById(R.id.searchInput);
         btnClear = findViewById(R.id.btnClear);
 
-        findViewById(R.id.header).setPadding(0, statusBarHeight() + dp(2), 0, 0);
+        findViewById(R.id.header).setPadding(0, dp(2), 0, 0);
+        SystemBar.applyHeader(this, 0xFF1B2A4A, 0xFFF5F6F8);
         findViewById(R.id.btnBack).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -87,6 +93,8 @@ public class CityListActivity extends Activity {
 
             @Override
             public void afterTextChanged(Editable s) {
+                // 边打字边联想（约 300ms 防抖），无需按回车
+                scheduleSearch(s.toString());
             }
         });
 
@@ -274,8 +282,29 @@ public class CityListActivity extends Activity {
 
     // ---------- 搜索 ----------
 
+    /** 防抖调度：输入变化后延迟发起联想请求 */
+    private void scheduleSearch(String raw) {
+        if (pendingSearch != null) searchHandler.removeCallbacks(pendingSearch);
+        final String q = raw == null ? "" : raw.trim();
+        if (q.isEmpty()) {
+            searchResults.setVisibility(View.GONE);
+            searchResults.removeAllViews();
+            return;
+        }
+        pendingSearch = new Runnable() {
+            @Override
+            public void run() {
+                doSearch(q);
+            }
+        };
+        searchHandler.postDelayed(pendingSearch, 300);
+    }
+
     private void doSearch() {
-        final String q = searchInput.getText().toString().trim();
+        doSearch(searchInput.getText().toString().trim());
+    }
+
+    private void doSearch(final String q) {
         if (q.isEmpty()) return;
         searchResults.setVisibility(View.VISIBLE);
         searchResults.removeAllViews();
@@ -293,6 +322,9 @@ public class CityListActivity extends Activity {
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
+                        // 丢弃过期响应：只有当前输入仍与本次查询一致时才渲染
+                        if (isFinishing() || isDestroyed()) return;
+                        if (!q.equals(searchInput.getText().toString().trim())) return;
                         renderSearchResults(results);
                     }
                 });
@@ -439,7 +471,7 @@ public class CityListActivity extends Activity {
             }
 
             private void resolve(double lat, double lon) {
-                City resolved = WeatherApi.reverseGeocode(lat, lon);
+                City resolved = WeatherApi.resolveNearestPlace(lat, lon);
                 if (resolved == null) {
                     resolved = new City();
                     resolved.name = "当前位置";
@@ -477,18 +509,13 @@ public class CityListActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        // 页面销毁时取消定位监听
+        // 页面销毁时取消定位监听与未执行的搜索联想
         Locator.cancelActive();
+        if (pendingSearch != null) searchHandler.removeCallbacks(pendingSearch);
         locating = false;
     }
 
     private int dp(int v) {
         return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
-    }
-
-    private int statusBarHeight() {
-        int res = getResources().getIdentifier("status_bar_height", "dimen", "android");
-        if (res > 0) return getResources().getDimensionPixelSize(res);
-        return dp(24);
     }
 }

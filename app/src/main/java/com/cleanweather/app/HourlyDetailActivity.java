@@ -6,6 +6,7 @@ import com.cleanweather.app.data.WeatherData;
 import com.cleanweather.app.ui.IconMapper;
 import com.cleanweather.app.ui.MetricChartView;
 import com.cleanweather.app.util.FormatUtil;
+import com.cleanweather.app.util.SystemBar;
 import com.cleanweather.app.util.TimeUtil;
 
 import android.app.Activity;
@@ -86,7 +87,8 @@ public class HourlyDetailActivity extends Activity {
         selectedCard = findViewById(R.id.selectedCard);
         hourList = findViewById(R.id.hourList);
 
-        findViewById(R.id.header).setPadding(0, statusBarHeight() + dp(2), 0, 0);
+        findViewById(R.id.header).setPadding(0, dp(2), 0, 0);
+        SystemBar.applyHeader(this, 0xFF1B2A4A, 0xFF1B2A4A);
 
         chart.setSelectListener(new MetricChartView.SelectListener() {
             @Override

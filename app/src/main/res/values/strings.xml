@@ -55,6 +55,49 @@
     <string name="remove_city">删除该城市？</string>
     <string name="cancel">取消</string>
     <string name="ok">确定</string>
-    <string name="no_results">没有找到相关城市</string>
-    <string name="hint_search">输入城市名称，如“自贡”</string>
+    <string name="no_results">没有找到相关地点</string>
+    <string name="hint_search">搜索城市、区县或道路</string>
+
+    <!-- 设置页 -->
+    <string name="settings">设置</string>
+    <string name="settings_general">通用</string>
+    <string name="settings_permissions">权限</string>
+    <string name="settings_update">更新</string>
+    <string name="settings_about">关于</string>
+    <string name="auto_check_update">自动检查升级</string>
+    <string name="auto_check_update_desc">每次启动时自动检测新版本</string>
+    <string name="permission_notification">通知权限</string>
+    <string name="permission_notification_on">已开启，可接收更新进度通知</string>
+    <string name="permission_notification_off">未开启，点击去开启</string>
+    <string name="permission_location">精准定位权限</string>
+    <string name="permission_location_on">已开启，可自动定位到最近地址</string>
+    <string name="permission_location_off">未开启，点击去授权</string>
+    <string name="check_update_manual">手动检查升级</string>
+    <string name="check_update_manual_desc">立即检查是否有新版本</string>
+    <string name="share_app">分享此应用</string>
+    <string name="share_app_desc">把纯净天气分享给朋友</string>
+    <string name="share_text">纯净天气（CleanWeather）—— 无广告、无资讯流的极简安卓天气 App，支持自动定位到最近地址、每小时与 10 天预报，兼容 Android 5.0+。\n最新版本下载地址：%1$s</string>
+    <string name="share_no_app">没有找到可用于分享的应用</string>
+    <string name="no_browser">没有找到可用的浏览器</string>
+    <string name="app_version">版本</string>
+    <string name="about_author">作者</string>
+    <string name="author_name">繁寂</string>
+    <string name="github_title">GitHub 项目地址</string>
+    <string name="open_settings">设置</string>
+
+    <!-- 更新提示 -->
+    <string name="update_checking">正在检查更新…</string>
+    <string name="update_check_failed">检查更新失败，请检查网络后重试</string>
+    <string name="update_is_latest">已是最新版本（v%1$s）</string>
+    <string name="update_found_title">发现新版本 v%1$s</string>
+    <string name="update_download">后台更新</string>
+    <string name="update_later">暂不更新</string>
+    <string name="update_no_notes">本次更新暂无详细说明。</string>
+    <string name="update_downloading">已开始后台下载更新…</string>
+    <string name="update_download_failed">更新包下载失败</string>
+
+    <!-- 下拉刷新 -->
+    <string name="pull_last_update">上次更新 %1$s</string>
+    <string name="pull_release_refresh">松手刷新 · 上次更新 %1$s</string>
+    <string name="last_update_unknown">暂无记录</string>
 </resources>
