@@ -14,10 +14,14 @@ import java.net.URL;
 import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -40,6 +44,9 @@ public final class WeatherApi {
     private static final String APP_ID = "9e21380c-ff19-4c78-b4ea-19558e93a5d3";
     private static final String UA =
             "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+
+    /** 搜索变体并发执行池（多个查询变体同时请求，降低输入联想延迟） */
+    private static final ExecutorService SEARCH_POOL = Executors.newFixedThreadPool(4);
 
     private static volatile String userId;
 
@@ -414,21 +421,140 @@ public final class WeatherApi {
         if (query == null) return out;
         String q = query.trim();
         if (q.isEmpty()) return out;
-        List<Place> places = searchLocations(q, 15, null, null);
+
+        // MSN 的地点检索接口存在两个特性：
+        //   1) 词序敏感：更细分的行政区（镇/区）放在前面才容易命中
+        //      （"何市镇大安区" 有结果，"大安区何市镇" 无结果）；
+        //   2) 对带后缀的短词结果偏少："大安区" 只返回 3 条，"大安" 返回 5 条。
+        // 因此客户端生成多个查询变体（原词 / 去后缀 / 词序反转 / 反转去后缀），
+        // 并发请求后按优先级合并去重，使体验对齐 MSN 网页。
+        List<String> variants = buildSearchVariants(q);
+        List<Future<List<Place>>> futures = new ArrayList<>();
+        for (final String v : variants) {
+            futures.add(SEARCH_POOL.submit(() -> searchLocations(v, 15, null, null)));
+        }
+
         Set<String> seen = new HashSet<>();
-        for (Place p : places) {
-            String key = p.name + "@" + String.format(Locale.US, "%.3f,%.3f", p.lat, p.lon);
-            if (!seen.add(key)) continue;
-            City c = new City();
-            c.name = placeTitle(p);
-            String chain = adminChain(p);
-            c.detail = chain.isEmpty() ? p.typeLabel() : p.typeLabel() + " · " + chain;
-            c.type = p.entityType;
-            c.lat = p.lat;
-            c.lon = p.lon;
-            c.isLocated = false;
-            out.add(c);
+        try {
+            for (Future<List<Place>> f : futures) {
+                List<Place> places = f.get(8, TimeUnit.SECONDS);
+                if (places == null) continue;
+                for (Place p : places) {
+                    if (p == null || p.name == null || p.name.isEmpty()) continue;
+                    String key = p.name + "@" + String.format(Locale.US, "%.3f,%.3f", p.lat, p.lon);
+                    if (!seen.add(key)) continue;
+                    City c = new City();
+                    c.name = placeTitle(p);
+                    String chain = adminChain(p);
+                    c.detail = chain.isEmpty() ? p.typeLabel() : p.typeLabel() + " · " + chain;
+                    c.type = p.entityType;
+                    c.lat = p.lat;
+                    c.lon = p.lon;
+                    c.isLocated = false;
+                    out.add(c);
+                    if (out.size() >= 15) break;
+                }
+                if (out.size() >= 15) break;
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "searchCities merge failed", e);
         }
         return out;
+    }
+
+    // ================= 搜索变体生成 =================
+
+    /** 常见行政区划后缀，长的放前面避免被短后缀提前截断 */
+    private static final String[] ADMIN_SUFFIXES = {
+            "街道", "社区", "自治区", "特别行政区", "省", "市", "区", "县", "镇", "乡", "路", "村", "号"
+    };
+
+    /**
+     * 生成搜索变体，按优先级排列：原词 → 去后缀 → 词序反转 → 反转去后缀。
+     * 用 LinkedHashSet 去重，保留顺序。
+     */
+    private static List<String> buildSearchVariants(String q) {
+        LinkedHashSet<String> vars = new LinkedHashSet<>();
+        vars.add(q);
+
+        String stripped = stripAdminSuffixes(q);
+        if (!stripped.equals(q) && !stripped.isEmpty()) vars.add(stripped);
+
+        List<String> tokens = tokenizeByAdminSuffix(q);
+        if (tokens.size() > 1) {
+            StringBuilder rev = new StringBuilder();
+            for (int i = tokens.size() - 1; i >= 0; i--) rev.append(tokens.get(i));
+            String reversed = rev.toString();
+            vars.add(reversed);
+            String revStripped = stripAdminSuffixes(reversed);
+            if (!revStripped.isEmpty()) vars.add(revStripped);
+        }
+        return new ArrayList<>(vars);
+    }
+
+    /** 按行政区划后缀切词，如 "大安区何市镇" → ["大安区","何市镇"]。
+     *  若某个 token 完全由后缀字符构成（如切出的 "镇"），则合并回前一个 token，
+     *  避免 "何市镇" 被错误切成 "何市"+"镇"。 */
+    private static List<String> tokenizeByAdminSuffix(String q) {
+        List<String> raw = new ArrayList<>();
+        int start = 0;
+        int i = 0;
+        while (i < q.length()) {
+            boolean matched = false;
+            for (String s : ADMIN_SUFFIXES) {
+                if (q.startsWith(s, i)) {
+                    int end = i + s.length();
+                    raw.add(q.substring(start, end));
+                    start = end;
+                    i = end;
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched) i++;
+        }
+        if (start < q.length()) raw.add(q.substring(start));
+
+        // 合并纯后缀碎片到前一个 token
+        List<String> tokens = new ArrayList<>();
+        for (String t : raw) {
+            if (!tokens.isEmpty() && isAllSuffixChars(t)) {
+                tokens.set(tokens.size() - 1, tokens.get(tokens.size() - 1) + t);
+            } else {
+                tokens.add(t);
+            }
+        }
+        return tokens;
+    }
+
+    /** 判断字符串是否全部由行政区划后缀字符构成 */
+    private static boolean isAllSuffixChars(String s) {
+        if (s == null || s.isEmpty()) return false;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if ("省市县区镇乡路村号街道社区".indexOf(c) < 0) return false;
+        }
+        return true;
+    }
+
+    /** 去掉所有行政区划后缀字符，如 "大安区何市镇" → "大安何市" */
+    private static String stripAdminSuffixes(String q) {
+        StringBuilder sb = new StringBuilder();
+        int i = 0;
+        while (i < q.length()) {
+            boolean matched = false;
+            for (String s : ADMIN_SUFFIXES) {
+                if (q.startsWith(s, i)) {
+                    i += s.length();
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched) {
+                sb.append(q.charAt(i));
+                i++;
+            }
+        }
+        return sb.toString().trim();
     }
 }
